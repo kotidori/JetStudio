@@ -1,0 +1,8 @@
+# 4 MB flash (Waveshare ESP32-S3-Zero, ESP32-S3FH4R2): the whole flash for the application, from
+# 0x10000 to the end. There is no OTA and no data partition: the games live on the SD card, and the
+# package embedded in the firmware is only a fallback (upstream's partitions.csv asks for 3 MB,
+# which also fits a 4 MB board but leaves the tail unused).
+# Name,   Type, SubType, Offset,  Size
+nvs,      data, nvs,     0x9000,  0x6000,
+phy_init, data, phy,     0xf000,  0x1000,
+factory,  app,  factory, 0x10000, 0x3E0000,

@@ -46,8 +46,26 @@ def cleanSnapEnvironment():
             os.environ[name] = ":".join(part for part in os.environ[name].split(":") if "/snap/" not in part)
 
 
+# The editor to run: a release folder ships it in bin/ (Linux) or at the top (Windows), the repository builds it from Godot source.
+def editorExecutable():
+    candidates = [Path(os.environ["JET_STUDIO_GODOT"])] if os.environ.get("JET_STUDIO_GODOT") else []
+    candidates += [ROOT / "bin/jet-studio.exe", ROOT / "jet-studio.exe", ROOT / "bin/jet-studio.x86_64",
+                   ROOT / "jet-studio.x86_64", GODOT]
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+
+    raise RuntimeError("No editor to run: in the repository build Godot (./jet-studio godot), "
+                       "in a release folder bin/jet-studio is missing")
+
+
 # Native Wayland keeps text sharp on HiDPI; under XWayland the compositor upscales a low-res window.
 def displayArguments():
+    #Windows has one display driver, and passing --display-driver x11 aborts it.
+    if sys.platform == "win32":
+        return []
+
     choice = os.environ.get("JET_STUDIO_DISPLAY", "auto")
 
     if choice == "auto":
@@ -355,13 +373,17 @@ def release(jobs):
 def main():
     parser = argparse.ArgumentParser(description="Jet Studio development commands")
     parser.add_argument("action", choices=["setup", "godot", "build", "run", "test", "firmware", "flash", "assets",
-                                                "examples", "export", "release", "release-windows"])
+                                                "examples", "export", "release", "release-windows", "sd"])
     parser.add_argument("--update", action="store_true", help="Fetch latest Godot and godot-cpp master; record revisions")
     parser.add_argument("-j", "--jobs", type=int, default=min(os.cpu_count() or 4, 10))
     parser.add_argument("--pack", type=Path)
     parser.add_argument("--project", type=Path, help="export: project whose main scene goes to --pack; firmware/flash: "
                         "project whose hardware settings (board, display, pins) are used")
     parser.add_argument("--port")
+    parser.add_argument("--launcher", action="store_true",
+                        help="firmware/flash: no game in the firmware, it boots into the SD card's menu")
+    parser.add_argument("--dest", help="sd: where the SD card is mounted (default: the only card found)")
+    parser.add_argument("--titles", action="store_true", help="sd: write games/games.txt from the project names")
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--screenshot", type=Path)
     args = parser.parse_args()
@@ -378,10 +400,7 @@ def main():
     elif args.action in ("run", "test", "export"):
         prepareDesktop()
         cleanSnapEnvironment()
-        executable = Path(os.environ.get("JET_STUDIO_GODOT", GODOT))
-
-        if not executable.is_file():
-            raise RuntimeError("Godot source build missing. Run ./jet-studio godot")
+        executable = editorExecutable()
 
         if args.action == "test": run(["ctest", "--test-dir", ROOT / "build", "--output-on-failure"])
 
@@ -414,12 +433,24 @@ def main():
                 raise RuntimeError("Godot UI integration test failed")
         else:
             run(command)
-    else:
+    elif args.action == "sd":
         if not args.pack:
-            raise RuntimeError("Specify --pack path/to/scene.jetpack exported by the editor")
+            raise RuntimeError("Usage: ./jet-studio sd --pack path/to/game.jetpack [--dest /media/me/CARD] [--titles]")
+
+        command = [sys.executable, ROOT / "tools/sdcard.py", "push", "--pack", args.pack.resolve()]
+
+        if args.dest: command += ["--dest", args.dest]
+        if args.titles: command.append("--titles")
+
+        run(command)
+    else:
+        if not args.pack and not args.launcher:
+            raise RuntimeError("Specify --pack path/to/scene.jetpack exported by the editor, "
+                               "or --launcher for a firmware that only runs the card's games")
 
         command = [sys.executable, ROOT / "tools/tasks.py", "flash" if args.action == "flash" else "build",
-                   "--target", "device", "--pack", args.pack.resolve()]
+                   "--target", "device"]
+        command += ["--launcher"] if args.launcher else ["--pack", args.pack.resolve()]
 
         if args.port: command += ["--port", args.port]
         #its hardware and buttons

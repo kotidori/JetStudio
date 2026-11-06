@@ -14,8 +14,16 @@ import hardware
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# A firmware with no embedded game: everything comes from the SD card (launcher).
+EMPTY_SCENE = """#pragma once
+// Generated from the editor scene. Do not edit.
+#include <cstdint>
+// No game is embedded in this firmware: it runs the .jetpack files on the SD card.
+static constexpr uint8_t scene_data[] = {0};
+"""
 
-def generateScene(pack, firmware):
+
+def generateScene(pack, firmware, sdCard=False):
     data = pack.read_bytes()
     #just a sanity check, the device validates the whole package anyway.
     if len(data) < 12 or data[:4] != b"JETP":
@@ -25,13 +33,19 @@ def generateScene(pack, firmware):
 
     if version < 18:
         #the editor exports with the bridge it loaded at startup, so an old version means a stale editor.
-        raise RuntimeError(f"The package is version {version}, the firmware reads versions 18 to 20: Jet Studio was updated "
+        raise RuntimeError(f"The package is version {version}, the firmware reads version 18: Jet Studio was updated "
                            "while it was running. Restart Jet Studio and build again")
 
-    if version > 20:
-        raise RuntimeError(f"Unknown .jetpack version {version} (expected 18 to 20): update Jet Studio")
+    if version != 18:
+        raise RuntimeError(f"Unknown .jetpack version {version} (expected 18): update Jet Studio")
 
     if len(data) > 1024 * 1024:
+        if sdCard:
+            # Too big to sit next to the firmware in flash, and it doesn't have to: the card holds it.
+            print(f"Scene is {len(data) // 1024} KB: not embedded, it runs from the SD card", flush=True)
+            hardware.writeIfChanged(firmware / "src/generated_scene.hpp", EMPTY_SCENE)
+            return
+
         raise RuntimeError("Scene package larger than 1 MiB")
 
     lines = ["#pragma once", "// Generated from the editor scene. Do not edit.", "#include <cstdint>",
@@ -83,7 +97,10 @@ def generateInputs(config, firmware, board):
                "// Buttons connect the pin to GND (internal pull-up). Bit i of input_active_high: the board's own button,\n"
                "// pressed = high (it has its own pull-down).\n"
                f"static constexpr int input_pins[{len(pins)}] = {{{', '.join(map(str, pins))}}};\n"
-               f"static constexpr uint32_t input_active_high = 0x{active_high:x};\n")
+               f"static constexpr uint32_t input_active_high = 0x{active_high:x};\n"
+               "// A pin of 100 + n is bit n of the board's I2C expander (see tools/hardware.py).\n"
+               f"static constexpr const char* const input_names[{len(pins)}] = "
+               f"{{{', '.join(json.dumps(name) for name, _ in actions)}}};\n")
     hardware.writeIfChanged(firmware / "src/generated_inputs.hpp", content)
     print("Buttons: " + (", ".join(f"{a}={hardware.pinLabel(board, p)}" for a, p in actions if p >= 0) or "none"), flush=True)
     return [(a, p) for a, p in actions if p >= 0]
@@ -142,6 +159,22 @@ def pioExecutable():
     raise RuntimeError("PlatformIO Core is missing. Install it before building the firmware.")
 
 
+# Environment for pio/esptool. GIT_CEILING_DIRECTORIES stops git's upward search for a
+# repository: a stray .git above the project (an empty one in the user's home, say) makes
+# ESP-IDF's revision probe blow up — grabRef.cmake dies reading a head-ref that a HEAD with
+# no commits never produced. The project's own repository (at ROOT) stays visible.
+def pioEnvironment():
+    environment = os.environ.copy()
+    ceiling = [str(ROOT.parent), str(Path.home())]
+    existing = environment.get("GIT_CEILING_DIRECTORIES", "")
+
+    if existing:
+        ceiling.append(existing)
+
+    environment["GIT_CEILING_DIRECTORIES"] = os.pathsep.join(dict.fromkeys(ceiling))
+    return environment
+
+
 def execute(args):
     if args.target == "desktop":
         if args.action == "flash":
@@ -159,19 +192,32 @@ def execute(args):
             raise RuntimeError("LovyanGFX missing. Run ./jet-studio setup")
 
         config = json.loads((args.project / "project.jetproject").read_text(encoding="utf-8")) if args.project else {}
-        _, profile, _ = hardware.settings(config)
+        hw, profile, _ = hardware.settings(config)
         firmware = hardware.firmwareDir(profile)
-        generateScene(args.pack, firmware)
+
+        if args.launcher:
+            # A firmware with nothing in it but the menu of the card's games.
+            if not hw["sd"]["enabled"]:
+                raise RuntimeError("The launcher firmware runs the card's games: enable the SD card "
+                                   "in Project Settings > Hardware")
+
+            hardware.writeIfChanged(firmware / "src/generated_scene.hpp", EMPTY_SCENE)
+            print("Launcher firmware: no game embedded, it boots into the SD card's menu", flush=True)
+        else:
+            generateScene(args.pack, firmware, sdCard=bool(hw["sd"]["enabled"]))
+
         buttons = generateInputs(config, firmware, profile)
         board, size, name, firmware = hardware.generate(config, buttons)
-        resolution, actions = packHeader(args.pack)
 
-        if tuple(resolution) != tuple(size):
-            raise RuntimeError(f"The scene is {resolution[0]}x{resolution[1]} but the display is "
-                               f"{size[0]}x{size[1]}: export the project again with its hardware settings")
+        if not args.launcher:
+            resolution, actions = packHeader(args.pack)
 
-        if actions != [action for action, _ in input_map(config)]:
-            raise RuntimeError("The package's Input Map differs from the project's: export the project again")
+            if tuple(resolution) != tuple(size):
+                raise RuntimeError(f"The scene is {resolution[0]}x{resolution[1]} but the display is "
+                                   f"{size[0]}x{size[1]}: export the project again with its hardware settings")
+
+            if actions != [action for action, _ in input_map(config)]:
+                raise RuntimeError("The package's Input Map differs from the project's: export the project again")
 
         environment = board + ("_release" if args.profile == "release" else "")
         esp32 = firmware == hardware.FIRMWARE
@@ -181,6 +227,10 @@ def execute(args):
 
         print(f"Hardware: {name}, {size[0]}x{size[1]}", flush=True)
         print(f"Profile: {args.profile} ({environment})", flush=True)
+
+        for warning in hardware.warnings(hw):
+            print(f"Note: {warning}", flush=True)
+
         command = [pioExecutable(), "run", "-e", environment]
 
         if args.action == "flash": command += ["-t", "upload"]
@@ -191,7 +241,10 @@ def execute(args):
 
     for command in commands:
         print("+", " ".join(command), flush=True)
-        result = subprocess.run(command, cwd=cwd)
+        # Explicit handles: under the Windows editor the inherited ones are invalid (see --job),
+        # and pio/esptool would lose their output or die writing it.
+        result = subprocess.run(command, cwd=cwd, stdout=sys.stdout, stderr=sys.stderr,
+                                env=pioEnvironment())
 
         if result.returncode:
             return result.returncode
@@ -204,21 +257,47 @@ def main():
     parser.add_argument("action", choices=["build", "flash"])
     #"nano" is the old name of "device".
     parser.add_argument("--target", choices=["desktop", "device", "nano"], default="desktop")
-    parser.add_argument("--pack", type=Path, required=True)
+    parser.add_argument("--pack", type=Path, help="The .jetpack the editor exported: embedded in the firmware "
+                        "(or run from the card when it is too big). Not needed with --launcher")
+    parser.add_argument("--launcher", action="store_true",
+                        help="Device firmware with no game in it: it boots into the SD card's menu")
     parser.add_argument("--port")
     parser.add_argument("--profile", choices=["debug", "release"], default="debug",
                         help="Firmware: debug keeps the serial log, release removes console and logs")
     parser.add_argument("--project", type=Path, help="Project folder: hardware and button pins from project.jetproject")
     parser.add_argument("--job", type=Path)
     args = parser.parse_args()
+
+    if args.launcher and args.target == "desktop":
+        parser.error("--launcher is for the device firmware: the PC player always runs a package")
+
+    if not args.launcher and not args.pack:
+        parser.error("Specify --pack path/to/game.jetpack, or --launcher for a firmware with no game in it")
+
     result = 1
     stream = None
 
     if args.job:
         args.job.parent.mkdir(parents=True, exist_ok=True)
-        stream = open(str(args.job) + ".log", "w", buffering=1, encoding="utf-8")
-        os.dup2(stream.fileno(), 1)
-        os.dup2(stream.fileno(), 2)
+        stream = open(str(args.job) + ".log", "w", buffering=1, encoding="utf-8", errors="replace")
+
+        if sys.platform == "win32":
+            # The editor is a GUI process: it starts this job without a console, so the std
+            # handles it was born with are invalid — and sys.stdout/sys.stderr cached them at
+            # startup, which os.dup2() cannot repair. Replace the streams themselves; the dup2
+            # is a best effort for anything that writes to fd 1/2 behind Python's back.
+            sys.stdout = stream
+            sys.stderr = stream
+
+            try:
+                os.dup2(stream.fileno(), 1)
+                os.dup2(stream.fileno(), 2)
+            except OSError:
+                pass
+        else:
+            os.dup2(stream.fileno(), 1)
+            os.dup2(stream.fileno(), 2)
+
         #the editor reads the log as UTF-8, whatever the system code page
         sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
         sys.stderr.reconfigure(encoding="utf-8")

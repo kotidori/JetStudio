@@ -7,13 +7,22 @@
 #define JET_SOFT_SPI 0
 #include <SPI.h>
 
+#define JET_SD_CARD 0
+#define JET_I2C_EXPANDER 0
+
 namespace Board{
     constexpr const char* name = "ST Nucleo-F746ZG + ILI9341 2.4\"/2.8\" 240×320";
     constexpr int screenWidth = 320, screenHeight = 240, rotation = 1;
     // Pins are STM32 PinName values (port * 16 + pin).
-    constexpr int clock = 5, mosi = 7, dc = 63, cs = 62, reset = 92, backlight = -1;
+    constexpr int clock = 5, mosi = 21, miso = -1, dc = 63, cs = 62, reset = 92, backlight = -1;
     constexpr int spiMode = 0;
-    constexpr int writeHz = 54000000;
+    constexpr int writeHz = 40000000;
+    constexpr bool sdSharedSpi = false;
+    constexpr int sdHost = 0, sdSck = -1, sdMosi = -1, sdMiso = -1, sdCs = -1, sdHz = 0;
+    constexpr const char* sdMount = "";
+    constexpr int expanderSda = -1, expanderScl = -1, expanderAddress = 0, expanderBits = 0;
+    constexpr bool expanderActiveHigh = false;
+    constexpr const char* menuAction = "ui_cancel";
     constexpr const char* port = "SPI1";
     inline SPI_TypeDef* spi(){ return SPI1; }
 
@@ -22,6 +31,8 @@ namespace Board{
         SPI.setMOSI(PinName(mosi));
         SPI.begin();
     }
+
+    inline int init_shared_spi(){ return 0; }
 }
 
 class LGFX : public lgfx::LGFX_Device{
@@ -36,7 +47,7 @@ class LGFX : public lgfx::LGFX_Device{
             b.freq_read = 8000000;
             b.pin_sclk = Board::clock;
             b.pin_mosi = Board::mosi;
-            b.pin_miso = -1;
+            b.pin_miso = Board::miso;
             b.pin_dc = Board::dc;
             bus.config(b);
             panel.setBus(&bus);
@@ -58,7 +69,7 @@ class LGFX : public lgfx::LGFX_Device{
             c.invert = false;
             c.rgb_order = false;
             c.dlen_16bit = false;
-            c.bus_shared = false;
+            c.bus_shared = Board::sdSharedSpi;
             panel.config(c);
 
             setPanel(&panel);

@@ -1,0 +1,159 @@
+{
+  "name": "Waveshare ESP32-S3-Zero",
+  "short": "S3-Zero",
+  "chip": "esp32s3",
+  "platformio_board": "esp32-s3-devkitc-1",
+  "flash": "4 MB",
+  "psram": "2 MB quad",
+  "platformio": [
+    "board_build.partitions = partitions_4mb.csv"
+  ],
+  "sdkconfig": [
+    "CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y",
+    "CONFIG_ESPTOOLPY_FLASHMODE_QIO=y",
+    "CONFIG_ESPTOOLPY_FLASHFREQ_80M=y",
+    "CONFIG_SPIRAM=y",
+    "CONFIG_SPIRAM_MODE_QUAD=y",
+    "CONFIG_SPIRAM_SPEED_80M=y"
+  ],
+  "pins": [
+    [
+      "BOOT",
+      0
+    ],
+    [
+      "IO1",
+      1
+    ],
+    [
+      "IO2",
+      2
+    ],
+    [
+      "IO3",
+      3
+    ],
+    [
+      "IO4",
+      4
+    ],
+    [
+      "IO5",
+      5
+    ],
+    [
+      "IO6",
+      6
+    ],
+    [
+      "IO7",
+      7
+    ],
+    [
+      "IO8",
+      8
+    ],
+    [
+      "IO9",
+      9
+    ],
+    [
+      "IO10",
+      10
+    ],
+    [
+      "IO11",
+      11
+    ],
+    [
+      "IO12",
+      12
+    ],
+    [
+      "IO13",
+      13
+    ],
+    [
+      "IO14",
+      14
+    ],
+    [
+      "IO15",
+      15
+    ],
+    [
+      "IO16",
+      16
+    ],
+    [
+      "IO17",
+      17
+    ],
+    [
+      "IO18",
+      18
+    ],
+    [
+      "LED",
+      21
+    ],
+    [
+      "IO38",
+      38
+    ],
+    [
+      "IO39",
+      39
+    ],
+    [
+      "IO40",
+      40
+    ],
+    [
+      "IO41",
+      41
+    ],
+    [
+      "IO42",
+      42
+    ],
+    [
+      "TX",
+      43
+    ],
+    [
+      "RX",
+      44
+    ],
+    [
+      "IO45",
+      45
+    ]
+  ],
+  "display_pins": {
+    "sck": 13,
+    "mosi": 6,
+    "cs": 11,
+    "dc": 10,
+    "reset": 9,
+    "backlight": 12
+  },
+  "sd": {
+    "sck": 13,
+    "mosi": 6,
+    "miso": 3,
+    "cs": 7,
+    "hz": 20000000,
+    "mount": "/sdcard"
+  },
+  "expander": {
+    "type": "PCF8574",
+    "sda": 8,
+    "scl": 18,
+    "address": 32,
+    "active_high": false
+  },
+  "menu_action": "ui_cancel",
+  "verified": true,
+  "notes": "ESP32-S3FH4R2: 4 MB flash and 2 MB quad PSRAM in the package. Native USB (Type-C) for flashing and the serial log; TX/RX (GPIO43/44) stay free for an external USB-UART. GPIO26-37 are not broken out (in-package flash and PSRAM), GPIO21 drives the on-board WS2812. The default pins are a handheld wiring: display and SD card share one SPI bus (SCK IO13, MOSI IO6, two chip selects), buttons on a PCF8574 I2C expander (SDA IO8, SCL IO18) plus two direct buttons."
+}
